@@ -147,13 +147,10 @@ func fetchURL(url string, headers map[string]string) ([]byte, error) {
 }
 
 // FetchConcurrently fetches concurrently
-func FetchConcurrently(urls []string, concurrency, wait, retry int) (responses [][]byte, err error) {
+func FetchConcurrently(urls []string, concurrency, wait, retry int, timeout time.Duration) (responses [][]byte, err error) {
 	reqChan := make(chan string, len(urls))
 	resChan := make(chan []byte, len(urls))
 	errChan := make(chan error, len(urls))
-	defer close(reqChan)
-	defer close(resChan)
-	defer close(errChan)
 
 	go func() {
 		for _, url := range urls {
@@ -178,20 +175,19 @@ func FetchConcurrently(urls []string, concurrency, wait, retry int) (responses [
 	bar.Finish()
 
 	var errs []error
-	timeout := time.After(10 * 60 * time.Second)
+	timeoutCh := time.After(timeout)
 	for range urls {
 		select {
 		case res := <-resChan:
 			responses = append(responses, res)
 		case err := <-errChan:
 			errs = append(errs, err)
-		case <-timeout:
+		case <-timeoutCh:
 			return nil, xerrors.New("Timeout Fetching URL")
 		}
 	}
-	if 0 < len(errs) {
+	if len(errs) > 0 {
 		return responses, fmt.Errorf("%s", errs)
-
 	}
 	return responses, nil
 }

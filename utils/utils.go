@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -12,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	pb "github.com/cheggaaa/pb/v3"
@@ -80,11 +82,13 @@ func Write(filePath string, data interface{}) error {
 	return nil
 }
 
-// GenWorkers generate workders
-func GenWorkers(num, wait int) chan<- func() {
+// GenWorkers generate workers
+func GenWorkers(num, wait int, wg *sync.WaitGroup) chan<- func() {
 	tasks := make(chan func())
-	for i := 0; i < num; i++ {
+	for range num {
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			for f := range tasks {
 				f()
 				time.Sleep(time.Duration(wait) * time.Second)
@@ -158,8 +162,10 @@ func FetchConcurrently(urls []string, concurrency, wait, retry int, timeout time
 		}
 	}()
 
+	timeoutCh := time.After(timeout)
 	bar := pb.StartNew(len(urls))
-	tasks := GenWorkers(concurrency, wait)
+	var wg sync.WaitGroup
+	tasks := GenWorkers(concurrency, wait, &wg)
 	for range urls {
 		tasks <- func() {
 			url := <-reqChan
@@ -173,21 +179,31 @@ func FetchConcurrently(urls []string, concurrency, wait, retry int, timeout time
 		bar.Increment()
 	}
 	bar.Finish()
+	close(tasks)
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-timeoutCh:
+		return nil, xerrors.New("Timeout Fetching URL")
+	}
 
 	var errs []error
-	timeoutCh := time.After(timeout)
 	for range urls {
 		select {
 		case res := <-resChan:
 			responses = append(responses, res)
 		case err := <-errChan:
 			errs = append(errs, err)
-		case <-timeoutCh:
-			return nil, xerrors.New("Timeout Fetching URL")
 		}
 	}
 	if len(errs) > 0 {
-		return responses, fmt.Errorf("%s", errs)
+		return responses, errors.Join(errs...)
 	}
 	return responses, nil
 }

@@ -162,7 +162,8 @@ func FetchConcurrently(urls []string, concurrency, wait, retry int, timeout time
 		}
 	}()
 
-	timeoutCh := time.After(timeout)
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 	bar := pb.StartNew(len(urls))
 	var wg sync.WaitGroup
 	tasks := GenWorkers(concurrency, wait, &wg)
@@ -178,7 +179,7 @@ func FetchConcurrently(urls []string, concurrency, wait, retry int, timeout time
 		}
 		select {
 		case tasks <- fn:
-		case <-timeoutCh:
+		case <-timer.C:
 			close(tasks)
 			return nil, xerrors.New("Timeout Fetching URL")
 		}
@@ -195,7 +196,7 @@ func FetchConcurrently(urls []string, concurrency, wait, retry int, timeout time
 
 	select {
 	case <-done:
-	case <-timeoutCh:
+	case <-timer.C:
 		return nil, xerrors.New("Timeout Fetching URL")
 	}
 

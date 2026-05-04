@@ -167,7 +167,7 @@ func FetchConcurrently(urls []string, concurrency, wait, retry int, timeout time
 	var wg sync.WaitGroup
 	tasks := GenWorkers(concurrency, wait, &wg)
 	for range urls {
-		tasks <- func() {
+		fn := func() {
 			url := <-reqChan
 			res, err := FetchURL(url, "", retry)
 			if err != nil {
@@ -175,6 +175,12 @@ func FetchConcurrently(urls []string, concurrency, wait, retry int, timeout time
 				return
 			}
 			resChan <- res
+		}
+		select {
+		case tasks <- fn:
+		case <-timeoutCh:
+			close(tasks)
+			return nil, xerrors.New("Timeout Fetching URL")
 		}
 		bar.Increment()
 	}
